@@ -1,0 +1,9 @@
+cat << 'EOF' > ~/api-libros/db.sql
+CREATE TABLE IF NOT EXISTS libros (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  titulo VARCHAR(150) NOT NULL,
+  autor VARCHAR(120) NOT NULL,
+  anio_publicacion INT NOT NULL,
+  creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+EOF
