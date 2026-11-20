@@ -1,0 +1,22 @@
+# Informe — Ejercicio 2 (Tema 5): CI/CD para la API `api-libros`
+
+## 1. Objetivo
+Automatizar las pruebas, la construcción y publicación de imágenes Docker, y el despliegue continuo de la API `api-libros` desde el repositorio de GitHub (`examen_libros_cag`) hacia la instancia AWS EC2 conectada a Amazon RDS (`catalogo_libros`).
+
+## 2. Pruebas automatizadas y CI (`.github/workflows/ci.yml`)
+- Se implementaron pruebas unitarias/de integración con **Jest** y **Supertest** (`test/api.test.js`) utilizando un doble de prueba de la capa de datos (sin requerir una instancia RDS real).
+- Se cubrieron los escenarios solicitados: `GET /health`, creación válida de un libro (`POST /libros`), rechazo de datos inválidos y respuesta `404` ante un libro inexistente.
+- Se configuró `npm test` (`jest --runInBand`) y se versionó `package-lock.json`.
+- El workflow `.github/workflows/ci.yml` ejecuta `npm ci` y `npm test` automáticamente en `push` y `pull_request` hacia la rama `main`, marcando el estado como fallido si alguna prueba no pasa.
+
+## 3. Contenedorización y CD (`.github/workflows/cd.yml`)
+- Se creó el `Dockerfile` para empaquetar la aplicación Node.js/Express (`server.js`), ajustando el servidor para escuchar en `0.0.0.0` dentro del contenedor y recibir la configuración de base de datos por variables de entorno (`PORT`, `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`).
+- El workflow `.github/workflows/cd.yml` encadena los trabajos `test` -> `build-and-push` -> `deploy`, etiquetando la imagen con el SHA corto del commit (`<usuario_dockerhub>/api-libros:<sha>`) y desplegando únicamente en cambios incorporados a `main` tras aprobar las pruebas.
+
+## 4. Seguridad, configuración externa y proxy Nginx
+- Las credenciales de Docker Hub y acceso SSH a EC2 se almacenan en **GitHub Actions Secrets**.
+- En la instancia EC2 (`3.14.252.130`), las variables de RDS se mantienen fuera del repositorio y de la imagen en `/etc/api-libros/rds.env` (propiedad `root:ubuntu`, permisos `640`).
+- El contenedor se publica en `127.0.0.1:3000:3000` detrás del proxy inverso **Nginx**, sin exponer directamente el puerto `3000` a Internet.
+
+## 5. Verificación del despliegue
+- Tras desplegar, se verificaron los endpoints `/health` (`200 OK`, estado de servicio y conexión a base de datos) y `/libros` (`200 OK`), confirmando el funcionamiento del pipeline y los cambios desplegados.
