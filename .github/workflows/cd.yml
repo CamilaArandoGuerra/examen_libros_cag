@@ -79,9 +79,15 @@ jobs:
           script: |
             set -e
 
-            IMAGE_LATEST="${{ needs.build-and-push.outputs.image_latest }}"
-            IMAGE_SHA="${{ needs.build-and-push.outputs.image_sha }}"
+            DOCKER_USER=$(echo "${{ secrets.DOCKERHUB_USERNAME }}" | tr '[:upper:]' '[:lower:]' | xargs)
+            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+            IMAGE_SHA="${DOCKER_USER}/api-libros:${SHORT_SHA}"
             ENV_FILE="/etc/api-libros/rds.env"
+
+            if [ -z "$DOCKER_USER" ]; then
+              echo "Error: DOCKERHUB_USERNAME está vacío"
+              exit 1
+            fi
 
             if [ ! -f "$ENV_FILE" ]; then
               echo "Error: No existe $ENV_FILE en la instancia EC2"
