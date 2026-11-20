@@ -1,4 +1,4 @@
-name: CD
+﻿name: CD
 
 on:
   push:
@@ -12,21 +12,25 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Run tests
+      - name: Run unit and integration tests
         run: npm test
 
   build-and-push:
     needs: test
     runs-on: ubuntu-latest
+    outputs:
+      image_latest: ${{ steps.meta.outputs.image_latest }}
+      image_sha: ${{ steps.meta.outputs.image_sha }}
+      short_sha: ${{ steps.meta.outputs.short_sha }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -34,15 +38,15 @@ jobs:
       - name: Set image tags and SHA
         id: meta
         run: |
-          DOCKER_USER=$(echo "${{ secrets.DOCKERHUB_USERNAME }}" | tr '[:upper:]' '[:lower:]' | xargs)
-          if [ -z "$DOCKER_USER" ]; then
-            echo "Error: DOCKERHUB_USERNAME está vacío"
+          DOCKER_USER=
+          if [ -z "" ]; then
+            echo "Error: DOCKERHUB_USERNAME está vacío en GitHub Secrets"
             exit 1
           fi
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          echo "image_latest=${DOCKER_USER}/api-libros:latest" >> "$GITHUB_OUTPUT"
-          echo "image_sha=${DOCKER_USER}/api-libros:${SHORT_SHA}" >> "$GITHUB_OUTPUT"
-          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          SHORT_SHA=
+          echo "image_latest=/api-libros:latest" >> ""
+          echo "image_sha=/api-libros:" >> ""
+          echo "short_sha=" >> ""
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -54,10 +58,11 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: dockerfile
           push: true
           tags: |
-            ${{ steps.meta.outputs.tag_sha }}
-            ${{ steps.meta.outputs.tag_latest }}
+            ${{ steps.meta.outputs.image_latest }}
+            ${{ steps.meta.outputs.image_sha }}
           build-args: |
             APP_VERSION=${{ github.sha }}
 
@@ -65,8 +70,8 @@ jobs:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy to EC2 with rollback on failure
-        uses: appleboy/ssh-action@v1.2.0
+      - name: Deploy to AWS EC2
+        uses: appleboy/ssh-action@v1.1.0
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
@@ -74,60 +79,41 @@ jobs:
           script: |
             set -e
 
-            IMAGE_REPO="${{ secrets.DOCKERHUB_USERNAME }}/api-libros"
-            NEW_IMAGE="${IMAGE_REPO}:${{ github.sha }}"
-            CONTAINER_NAME="api-libros-container"
+            IMAGE_LATEST="${{ needs.build-and-push.outputs.image_latest }}"
+            IMAGE_SHA="${{ needs.build-and-push.outputs.image_sha }}"
             ENV_FILE="/etc/api-libros/rds.env"
-            PREV_IMAGE_FILE="/etc/api-libros/previous_image.txt"
 
-            if [ ! -f "$ENV_FILE" ]; then
-              echo "ERROR: No existe $ENV_FILE en EC2"
+            if [ ! -f "" ]; then
+              echo "Error: No existe  en la instancia EC2"
               exit 1
             fi
 
-            echo "$DOCKERHUB_TOKEN" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+            echo "Descargando imagen: "
+            docker pull ""
 
-            PREV_IMAGE=""
-            if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
-              PREV_IMAGE=$(docker inspect --format='{{.Config.Image}}' "$CONTAINER_NAME" || true)
-              if [ -n "$PREV_IMAGE" ]; then
-                echo "$PREV_IMAGE" > "$PREV_IMAGE_FILE"
-              fi
-            elif [ -f "$PREV_IMAGE_FILE" ]; then
-              PREV_IMAGE=$(cat "$PREV_IMAGE_FILE")
-            fi
+            echo "Deteniendo y eliminando contenedor anterior (si existe)..."
+            docker stop api-libros 2>/dev/null || true
+            docker rm api-libros 2>/dev/null || true
 
-            docker pull "$NEW_IMAGE"
-
-            docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
-
+            echo "Levantando nuevo contenedor api-libros..."
             docker run -d \
-              --name "$CONTAINER_NAME" \
+              --name api-libros \
               --restart unless-stopped \
-              --env-file "$ENV_FILE" \
-              -e APP_VERSION="${{ github.sha }}" \
               -p 127.0.0.1:3000:3000 \
-              "$NEW_IMAGE"
+              --env-file "" \
+              ""
 
-            sleep 3
+            echo "Limpiando imágenes antiguas sin usar..."
+            docker image prune -f || true
 
-            if curl -fsS http://127.0.0.1:3000/health >/dev/null && curl -fsS http://127.0.0.1:3000/libros >/dev/null; then
-              echo "Despliegue exitoso de $NEW_IMAGE"
-              exit 0
-            else
-              echo "Fallo en la comprobacion post-despliegue. Restaurando version anterior..."
-              docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
-              if [ -n "$PREV_IMAGE" ]; then
-                docker pull "$PREV_IMAGE" || true
-                docker run -d \
-                  --name "$CONTAINER_NAME" \
-                  --restart unless-stopped \
-                  --env-file "$ENV_FILE" \
-                  -p 127.0.0.1:3000:3000 \
-                  "$PREV_IMAGE" || true
+            echo "Esperando a que la API responda en /health..."
+            for i in ; do
+              if curl -sf http://127.0.0.1:3000/health > /dev/null; then
+                echo "API saludable en intento "
+                break
               fi
-              exit 1
-            fi
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+              sleep 2
+            done
+
+            curl -i http://127.0.0.1:3000/health
+            curl -i http://127.0.0.1:3000/libros
